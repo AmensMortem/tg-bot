@@ -12,37 +12,52 @@ TOKEN = os.getenv('TOKEN')
 
 
 class DataBase:
-    def __init__(self, id_tg):
-        self.db = sqlite3.connect('datetime.sqlite')
+    def __init__(self, id_tg, id_chat):
+        self.db = sqlite3.connect('datetime.db')
         self.cur = self.db.cursor()
         self.id_tg = id_tg
+        self.id_chat = id_chat
 
-    def addition(self, date_time):
-        res = self.cur.execute("""INSERT INTO date_users(date) VALUES (?)""", date_time).fetchall()
+    def addition(self, date, reminding):
+        self.cur.execute(
+            """INSERT INTO user(id_tg, id_chat) VALUES (?,?)""", (self.id_tg, self.id_chat)).fetchall()
+        id_base = self.cur.execute(
+            """SELECT * FROM user WHERE id_tg = ?""", self.id_tg).fetchall()
+        self.cur.execute(
+            """INSERT INTO users_to_date(date, user) VALUES (?,?)""", (date, 1)).fetchall()
+        self.cur.execute(
+            """INSERT INTO reminding(description, target) VALUES (?,?)""", (reminding, 1)).fetchall()
+        self.db.commit()
+        self.db.close()
 
     def deletion(self, date_time):
         try:
-            res = self.cur.execute("""DELETE FROM date_users WHERE date = ?""", date_time).fetchall()
+            res = self.cur.execute(
+                """DELETE FROM date_users WHERE date = ?""", date_time).fetchall()
             self.db.close()
             return 'kk'
         except:
             return 'error'
 
     def editing(self, date_time):
-        res = self.cur.execute("""UPDATE date_users SET duration = '162' WHERE id = ? AND WHERE date = ?""",
-                               (self.id_tg, date_time)).fetchall()
+        res = self.cur.execute(
+            """UPDATE имя_таблицы SET название_колонки = новое_значение WHERE условие""",
+            (self.id_tg, date_time)).fetchall()
 
     def viewing(self, date_time):
-        res = self.cur.execute("""SELECT * FROM users_id WHERE id_tg = ?""", self.id_tg).fetchall()
-        res = self.cur.execute("""SELECT * FROM date_users WHERE id = ?""", res).fetchall()
-        res = self.cur.execute("""SELECT * FROM date_users WHERE date = ?""", date_time).fetchall()
+        id_base = self.cur.execute(
+            """SELECT * FROM user WHERE id_tg = ?""", self.id_tg).fetchall()
+        res = self.cur.execute(
+            """SELECT * FROM users_to_date WHERE id = ?""", self.id_tg).fetchall()
+        print(res)
+        return res
 
 
 def start(update, context):
     update.message.reply_text("Я бот time-manager, если ты хочешь узнать какие у меня есть команды напиши '/help'")
 
 
-def h(update, context):
+def help_(update, context):
     update.message.reply_text("/now, сегодняшняя дата, время до секунды\n"
                               "/timer ? секунд/минут/часов\n"
                               "/dtimer, удаление установленого таймера\n"
@@ -53,9 +68,13 @@ def now(update, context):
     update.message.reply_text(datetime.datetime.now().strftime(f'{time.ctime(time.time())}'))
 
 
-def task(context):
-    job = context.job
-    context.bot.send_message(job.context, text='Вернулся!')
+def task(context, reminded=None):
+    if reminded is not None:
+        job = context.job
+        context.bot.send_message(job.context, text=reminded)
+    else:
+        job = context.job
+        context.bot.send_message(job.context, text='Вернулся!')
 
 
 def timer(update, context):
@@ -66,29 +85,19 @@ def timer(update, context):
         if due <= 0:
             update.message.reply_text('Извините, мы не умеем возвращаться в прошлое...')
             return
-        if text_message[2][0] == 'с':
-            if 'job' in context.chat_data:
+        timestamp = text_message[2][0]
+        messages = {"с": (1, "секунд"),
+                    "м": (60, "минут"),
+                    "ч": (60 * 60, "часов")}
+        due = due * messages[timestamp][0]
+        units_text = messages[timestamp][1]
+        if timestamp == "с":
+            if "job" in context.chat_data:
                 old_job = context.chat_data['job']
                 old_job.schedule_removal()
             new_job = context.job_queue.run_once(task, due, context=chat_id)
             context.chat_data['job'] = new_job
-            update.message.reply_text(f'Вернусь через {due} секу')
-        elif text_message[2][0] == 'м':
-            due = due * 60
-            if 'job' in context.chat_data:
-                old_job = context.chat_data['job']
-                old_job.schedule_removal()
-            new_job = context.job_queue.run_once(task, due, context=chat_id)
-            context.chat_data['job'] = new_job
-            update.message.reply_text(f'Вернусь через {int(text_message[1])} мин')
-        elif text_message[2][0] == 'ч':
-            due = due * 60 * 60
-            if 'job' in context.chat_data:
-                old_job = context.chat_data['job']
-                old_job.schedule_removal()
-            new_job = context.job_queue.run_once(task, due, context=chat_id)
-            context.chat_data['job'] = new_job
-            update.message.reply_text(f'Вернусь через {int(text_message[1])} час')
+            update.message.reply_text(f'Вернусь через {text_message[1]} {units_text}')
     except Exception:
         update.message.reply_text('Ты просишь от меня невозможного :с')
 
@@ -106,39 +115,80 @@ def unset_timer(update, context):
 def change_timer(update, context):
     try:
         if 'job' not in context.chat_data:
-            update.message.reply_text('Нет активного таймера')
+            update.message.reply_text("Нет активного таймера")
             return
         chat_id = update.message.chat_id
         text_message = update.message.text.split(' ')
         due = int(text_message[1])
+        timestamp = text_message[2][0]
+        messages = {"с": (1, "секунд"),
+                    "м": (60, "минут"),
+                    "ч": (60 * 60, "часов")}
+        due = due * messages[timestamp][0]
+        units_text = messages[timestamp][1]
         if 'job' in context.chat_data:
             old_job = context.chat_data['job']
             old_job.schedule_removal()
-        print(text_message[2][0] == 'с')
-        if text_message[2][0] == 'с':
+        if timestamp == 'с':
             new_job = context.job_queue.run_once(task, due, context=chat_id)
             context.chat_data['job'] = new_job
-            update.message.reply_text(f'Отлично! Вернусь через {due} секу')
-        if text_message[2][0] == 'м':
-            new_job = context.job_queue.run_once(task, due, context=chat_id)
-            context.chat_data['job'] = new_job
-            update.message.reply_text(f'Отлично! Вернусь через {due * 60} секу')
-        if text_message[2][0] == 'ч':
-            new_job = context.job_queue.run_once(task, due, context=chat_id)
-            context.chat_data['job'] = new_job
-            update.message.reply_text(f'Отлично! Вернусь через {due * 60 * 60} секу')
+            update.message.reply_text(f'Отлично! Вернусь через {text_message[1]} {units_text}')
     except:
         update.message.reply_text('Опять что-то не так, я хочу спать вообще-то')
+
+
+def timer_remind(second):
+    time.sleep(second)
+    return
+
+
+def addition(update, context):
+    try:
+        text_message = update.message.text.split(', ')
+        date_, msg = text_message.split(',')
+        date = datetime.datetime.strptime(date_, '%Y-%m-%d %H:%M:%S')
+        today = datetime.datetime.now()
+        delta = today - date
+        DataBase.addition(update.message.chat_id, date, msg)
+        timer_remind(delta)
+        task(context, reminded=msg)
+    except Exception:
+        print(Exception.__class__)
+
+
+def editing(update, context):
+    text_message = update.message.text.split(' ')
+    text_message = text_message[1:]
+
+
+#    DataBase.editing()
+
+
+def viewing(update, context):
+    text_message = update.message.text.split(' ')
+    text_message = text_message[1:]
+
+
+#    DataBase.viewing()
+
+
+def deletion(update, context):
+    text_message = update.message.text.split(' ')
+    text_message = text_message[1:]
+
+
+#    DataBase.deletion()
 
 
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
-    dp.add_handler(CommandHandler("add", DataBase.addition))
-    dp.add_handler(CommandHandler("delete", DataBase.editing))
-    dp.add_handler(CommandHandler("edit", DataBase.deletion))
+    dp.add_handler(CommandHandler("add", addition))
+    dp.add_handler(CommandHandler("delete", deletion))
+    dp.add_handler(CommandHandler("edit", editing))
+    dp.add_handler(CommandHandler("viewing", viewing))
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("help", h))
+    dp.add_handler(CommandHandler("help", help_))
     dp.add_handler(CommandHandler("now", now))
     dp.add_handler(CommandHandler("timer", timer))
     dp.add_handler(CommandHandler("dtimer", unset_timer))
@@ -151,13 +201,6 @@ if __name__ == '__main__':
     main()
 '''Задачи:
 Для этого:
-2. прописать комманды
-    1. #start, help
-    2. #дата, время сейчас
-    3. #создание таймера
-    4. #удаление
-    5. редактировние
-3. настроить интуитивно понятную клавиатуру или сделать комманду помощь.
 4. возможность пользователя добавлять, удалять, редактировать напоминания.
 5. взаимодействия с бд.
 5. возможность напоминания в иных мессенджерах
